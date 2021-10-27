@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,7 +21,7 @@ type Options struct {
 	Input     flags.Filename `short:"i" long:"input" description:"Input file" default:"."`
 	Reverse   bool           `short:"n" long:"Reverse" description:"Reverse numerical order of found files"`
 	Delete    bool           `short:"d" long:"delete" description:"Delete original files'"`
-	MaxChunks int            `short:"c" long:"max-chunks" description:"Max Chunks to merge, default 0 means merge all'" default:"0"`
+	MaxChunks int            `short:"c" long:"max-outputFilesPerChunk" description:"Max outputFilesPerChunk to merge, default 0 means merge all'" default:"0"`
 }
 
 const (
@@ -46,7 +47,8 @@ type FilesList map[string][]*logFile
 func main() {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Println("ERROR: ", err)
+			log.Printf("[ERROR]: %v\n", err)
+			log.Printf("%v\n", string(debug.Stack()))
 		}
 		log.Println("[Finished]")
 	}()
@@ -139,18 +141,18 @@ func MergeLogList(basepath, basename string, list []*logFile, config *Options) {
 		return list[i].index > list[j].index
 	})
 
-	var chunks = len(list)
-	if options.MaxChunks > 1 {
-		chunks = len(list) / options.MaxChunks
-		if chunks < 2 {
-			log.Println("[ERROR]: Cannot subdivide into the indicated number of chunks.")
+	var outputFilesPerChunk = len(list)
+	if options.MaxChunks <= 1 {
+		options.MaxChunks = 1
+	} else {
+		outputFilesPerChunk = len(list) / options.MaxChunks
+		if outputFilesPerChunk < 2 {
+			log.Println("[ERROR]: Cannot subdivide into the indicated number of outputFilesPerChunk.")
 			return
 		}
 		if len(list)%options.MaxChunks > 0 {
-			chunks++
+			options.MaxChunks++
 		}
-	} else {
-		options.MaxChunks = 1
 	}
 
 	nameOutFile := strings.Join([]string{basename, aggregatedLogSuffix, "log"}, ".")
@@ -169,13 +171,13 @@ func MergeLogList(basepath, basename string, list []*logFile, config *Options) {
 		}
 		log.Println("Created output file: ", outFile)
 
-		var currPos = chunkIdx * chunks
-		var nextPos = (chunkIdx + 1) * chunks
+		var currPos = chunkIdx * outputFilesPerChunk
+		var nextPos = (chunkIdx + 1) * outputFilesPerChunk
 		if nextPos >= len(list) {
 			nextPos = len(list)
 		}
 
-		log.Println(chunkIdx*chunks, chunks)
+		// log.Println(currPos, nextPos, len(list), chunkIdx, options.MaxChunks)
 		MergeLogChunk(basepath, f, list[currPos:nextPos])
 	}
 }
@@ -184,6 +186,7 @@ func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Printf("[ERROR]: %v\n", err)
+			log.Printf("%v\n", string(debug.Stack()))
 		}
 		if f != nil {
 			// flush and close the file
@@ -202,7 +205,10 @@ func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
 	for idx, _ := range list {
 		go func(listIndex int32) {
 			defer func() {
-				_ = recover()
+				if err := recover(); err != nil {
+					log.Printf("[ERROR]: %v\n", err)
+					log.Printf("%v\n", string(debug.Stack()))
+				}
 				wg.Done()
 			}()
 
@@ -234,7 +240,10 @@ func DeleteLogList(basepath string, list []*logFile) {
 		log.Println("[Delete ", logPart.name, "]")
 		go func(deleteFile string) {
 			defer func() {
-				_ = recover()
+				if err := recover(); err != nil {
+					log.Printf("[ERROR]: %v\n", err)
+					log.Printf("%v\n", string(debug.Stack()))
+				}
 				wg.Done()
 			}()
 			if err := os.Remove(deleteFile); err != nil {
