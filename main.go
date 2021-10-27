@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/jessevdk/go-flags"
 )
@@ -193,18 +195,35 @@ func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
 
 	log.Println("[Start output of log chunk: ", basepath, "]")
 
-	for idx, logPart := range list {
-		log.Println("[", idx+1, " / ", len(list), "]: ", logPart.name)
+	var currentWriteFileIndex = int32(0)
 
-		data, err := ioutil.ReadFile(filepath.Join(basepath, logPart.name))
-		if err != nil {
-			log.Println("[End output for ERROR: ", err, "]")
-			return
-		}
+	wg := &sync.WaitGroup{}
+	wg.Add(len(list))
+	for idx, _ := range list {
+		go func(listIndex int32) {
+			defer func() {
+				_ = recover()
+				wg.Done()
+			}()
 
-		log.Println("Read ", len(data), "bytes")
-		_, _ = f.Write(data)
+			data, err := ioutil.ReadFile(filepath.Join(basepath, list[listIndex].name))
+			if err != nil {
+				log.Println("[End output for ERROR: ", err, "]")
+				return
+			}
+
+			for atomic.LoadInt32(&currentWriteFileIndex) != listIndex {
+				time.Sleep(10 * time.Microsecond)
+			}
+
+			log.Println("[", listIndex+1, " / ", len(list), "]: ", list[listIndex].name)
+			log.Println("Read ", len(data), "bytes")
+			_, _ = f.Write(data)
+
+			atomic.StoreInt32(&currentWriteFileIndex, listIndex+1)
+		}(int32(idx))
 	}
+	wg.Wait()
 }
 
 func DeleteLogList(basepath string, list []*logFile) {
@@ -214,7 +233,10 @@ func DeleteLogList(basepath string, list []*logFile) {
 		wg.Add(1)
 		log.Println("[Delete ", logPart.name, "]")
 		go func(deleteFile string) {
-			defer wg.Done()
+			defer func() {
+				_ = recover()
+				wg.Done()
+			}()
 			if err := os.Remove(deleteFile); err != nil {
 				log.Println("Delete file error: ", err)
 			}
