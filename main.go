@@ -21,7 +21,7 @@ type Options struct {
 	Input     flags.Filename `short:"i" long:"input" description:"Input file" default:"."`
 	Reverse   bool           `short:"n" long:"Reverse" description:"Reverse numerical order of found files"`
 	Delete    bool           `short:"d" long:"delete" description:"Delete original files'"`
-	MaxChunks int            `short:"c" long:"max-outputFilesPerChunk" description:"Max outputFilesPerChunk to merge, default 0 means merge all'" default:"0"`
+	MaxChunks int            `short:"c" long:"max-chunks" description:"Max chunks to merge, default 0 means merge all'" default:"0"`
 }
 
 const (
@@ -177,7 +177,6 @@ func MergeLogList(basepath, basename string, list []*logFile, config *Options) {
 			nextPos = len(list)
 		}
 
-		// log.Println(currPos, nextPos, len(list), chunkIdx, options.MaxChunks)
 		MergeLogChunk(basepath, f, list[currPos:nextPos])
 	}
 }
@@ -193,10 +192,10 @@ func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
 			_ = f.Sync()
 			_ = f.Close()
 		}
-		log.Println("[End output of log]")
+		log.Println("[End output of log chunk]")
 	}()
 
-	log.Println("[Start output of log chunk: ", basepath, "]")
+	log.Println("[Start output of log chunk]")
 
 	var currentWriteFileIndex = int32(0)
 
@@ -222,8 +221,7 @@ func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
 				time.Sleep(10 * time.Microsecond)
 			}
 
-			log.Println("[", listIndex+1, " / ", len(list), "]: ", list[listIndex].name)
-			log.Println("Read ", len(data), "bytes")
+			log.Printf("[%d / %d]: %s (Read %d bytes)\n", listIndex+1, len(list), list[listIndex].name, len(data))
 			_, _ = f.Write(data)
 
 			atomic.StoreInt32(&currentWriteFileIndex, listIndex+1)
