@@ -63,6 +63,13 @@ func main() {
 		os.Exit(outCode)
 	}
 
+	MainRoutine(&options)
+}
+
+func MainRoutine(options *Options) {
+	if options == nil {
+		panic("Launch options not passed correctly")
+	}
 	log.Println(options)
 
 	log.Println("[Begin scan of path]")
@@ -75,7 +82,7 @@ func main() {
 	}
 
 	for fBase, list := range allFiles {
-		MergeLogList(string(options.Input), fBase, list, &options)
+		MergeLogList(string(options.Input), fBase, list, options)
 
 		if options.Delete {
 			DeleteLogList(string(options.Input), list)
