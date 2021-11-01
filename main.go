@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/jessevdk/go-flags"
 )
@@ -47,8 +48,8 @@ type FilesList map[string][]*logFile
 func main() {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Printf("[ERROR]: %v\n", err)
-			log.Printf("%v\n", string(debug.Stack()))
+			log.Errorf("[ERROR]: %v\n", err)
+			log.Errorf("%v\n", string(debug.Stack()))
 		}
 		log.Println("[Finished]")
 	}()
@@ -57,28 +58,29 @@ func main() {
 	if _, err := parser.Parse(); err != nil {
 		outCode := 0
 		if flagsErr, ok := err.(*flags.Error); !ok || flagsErr.Type != flags.ErrHelp {
-			log.Println(flagsErr)
+			log.Errorf("%v\n", flagsErr)
 			outCode = 1
 		}
 		os.Exit(outCode)
 	}
 
-	MainRoutine(&options)
+	os.Exit(MainRoutine(&options))
 }
 
-func MainRoutine(options *Options) {
+func MainRoutine(options *Options) int {
 	if options == nil {
-		panic("Launch options not passed correctly")
+		log.Errorf("Launch options not passed correctly\n")
+		return 1
 	}
 	log.Println(options)
 
 	log.Println("[Begin scan of path]")
 	allFiles, err := ScanFolderForFiles(options.Input)
-
 	log.Println("[End scan of path]")
+
 	if err != nil {
-		log.Fatalf("ERROR: found during input path traversal: %v\n", err)
-		os.Exit(1)
+		log.Errorf("ERROR: found during input path traversal: %v\n", err)
+		return 1
 	}
 
 	for fBase, list := range allFiles {
@@ -88,6 +90,8 @@ func MainRoutine(options *Options) {
 			DeleteLogList(string(options.Input), list)
 		}
 	}
+	// correct execution
+	return 0
 }
 
 func ScanFolderForFiles(logsPath flags.Filename) (FilesList, error) {
@@ -154,7 +158,7 @@ func MergeLogList(basepath, basename string, list []*logFile, config *Options) {
 	} else {
 		outputFilesPerChunk = len(list) / options.MaxChunks
 		if outputFilesPerChunk < 2 {
-			log.Println("[ERROR]: Cannot subdivide into the indicated number of outputFilesPerChunk.")
+			log.Errorf("[ERROR]: Cannot subdivide into the indicated number of outputFilesPerChunk.\n")
 			return
 		}
 		if len(list)%options.MaxChunks > 0 {
@@ -173,7 +177,7 @@ func MergeLogList(basepath, basename string, list []*logFile, config *Options) {
 		outFile, _ := filepath.Abs(filepath.Join(basepath, nameOutFile))
 		f, err := os.Create(outFile)
 		if err != nil {
-			log.Println("[End output for ERROR: ", err, "]")
+			log.Errorf("[End output for ERROR: %v]\n", err)
 			return
 		}
 		log.Println("Created output file: ", outFile)
@@ -191,8 +195,8 @@ func MergeLogList(basepath, basename string, list []*logFile, config *Options) {
 func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Printf("[ERROR]: %v\n", err)
-			log.Printf("%v\n", string(debug.Stack()))
+			log.Errorf("[ERROR]: %v\n", err)
+			log.Errorf("%v\n", string(debug.Stack()))
 		}
 		if f != nil {
 			// flush and close the file
@@ -212,15 +216,15 @@ func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
 		go func(listIndex int32) {
 			defer func() {
 				if err := recover(); err != nil {
-					log.Printf("[ERROR]: %v\n", err)
-					log.Printf("%v\n", string(debug.Stack()))
+					log.Errorf("[ERROR]: %v\n", err)
+					log.Errorf("%v\n", string(debug.Stack()))
 				}
 				wg.Done()
 			}()
 
 			data, err := ioutil.ReadFile(filepath.Join(basepath, list[listIndex].name))
 			if err != nil {
-				log.Println("[End output for ERROR: ", err, "]")
+				log.Errorf("[ERROR]: End output for %v\n", err)
 				return
 			}
 
@@ -246,13 +250,13 @@ func DeleteLogList(basepath string, list []*logFile) {
 		go func(deleteFile string) {
 			defer func() {
 				if err := recover(); err != nil {
-					log.Printf("[ERROR]: %v\n", err)
-					log.Printf("%v\n", string(debug.Stack()))
+					log.Errorf("[ERROR]: %v\n", err)
+					log.Errorf("%v\n", string(debug.Stack()))
 				}
 				wg.Done()
 			}()
 			if err := os.Remove(deleteFile); err != nil {
-				log.Println("Delete file error: ", err)
+				log.Warningf("Delete file error: %v\n", err)
 			}
 
 		}(filepath.Join(basepath, logPart.name))
