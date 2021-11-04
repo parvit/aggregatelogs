@@ -1,4 +1,4 @@
-module github.com/blackmage89/aggregatelogs
+module github.com/parvit/aggregatelogs
 
 go 1.17
 
