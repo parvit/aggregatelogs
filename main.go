@@ -34,10 +34,6 @@ func (o Options) String() string {
 	return fmt.Sprintf(optionsFormat, o.Input, o.Reverse, o.Delete, o.MaxChunks)
 }
 
-var options Options
-
-var parser = flags.NewParser(&options, flags.Default)
-
 type logFile struct {
 	index int
 	name  string
@@ -46,6 +42,9 @@ type logFile struct {
 type FilesList map[string][]*logFile
 
 func main() {
+	var options Options
+	var parser = flags.NewParser(&options, flags.Default)
+	
 	defer func() {
 		if err := recover(); err != nil {
 			log.Errorf("[ERROR]: %v\n", err)
@@ -153,23 +152,23 @@ func MergeLogList(basepath, basename string, list []*logFile, config *Options) {
 	})
 
 	var outputFilesPerChunk = len(list)
-	if options.MaxChunks <= 1 {
-		options.MaxChunks = 1
+	if config.MaxChunks <= 1 {
+		config.MaxChunks = 1
 	} else {
-		outputFilesPerChunk = len(list) / options.MaxChunks
+		outputFilesPerChunk = len(list) / config.MaxChunks
 		if outputFilesPerChunk < 2 {
 			log.Errorf("[ERROR]: Cannot subdivide into the indicated number of outputFilesPerChunk.\n")
 			return
 		}
-		if len(list)%options.MaxChunks > 0 {
-			options.MaxChunks++
+		if len(list)%config.MaxChunks > 0 {
+			config.MaxChunks++
 		}
 	}
 
 	nameOutFile := strings.Join([]string{basename, aggregatedLogSuffix, "log"}, ".")
 
-	for chunkIdx := 0; chunkIdx < options.MaxChunks; chunkIdx++ {
-		if options.MaxChunks > 1 {
+	for chunkIdx := 0; chunkIdx < config.MaxChunks; chunkIdx++ {
+		if config.MaxChunks > 1 {
 			idxString := strconv.FormatInt(int64(chunkIdx+1), 10)
 			nameOutFile = strings.Join([]string{basename, aggregatedLogSuffix, idxString, "log"}, ".")
 		}
