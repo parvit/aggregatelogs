@@ -27,6 +27,7 @@ jobs:
 
     - name: Test
       run: |
+        set
         set PATH=$PATH:$HOME/go/bin
         go test -v | go-junit-results > results.xml
 
