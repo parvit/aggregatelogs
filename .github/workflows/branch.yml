@@ -20,7 +20,7 @@ jobs:
       run: go install
 
     - name: Install go-junit-results binary
-      run: go install github.com/jstemmer/go-junit-report
+      run: go install -v -n -a github.com/jstemmer/go-junit-report
 
     - name: Build
       run: go build -v -p 4
