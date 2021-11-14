@@ -20,16 +20,13 @@ jobs:
       run: go install
 
     - name: Install go-junit-results binary
-      run: go install -v -n -a github.com/jstemmer/go-junit-report
+      run: go install github.com/jstemmer/go-junit-report
 
     - name: Build
       run: go build -v -p 4
 
     - name: Test
-      run: |
-        set
-        set PATH=$PATH:$HOME/go/bin
-        go test -v | go-junit-results > results.xml
+      run: go test -v | go-junit-report > results.xml
 
     - name: Publish Unit Test Results
       uses: EnricoMi/publish-unit-test-result-action@v1
