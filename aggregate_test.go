@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"io/ioutil"
 	"testing"
@@ -52,6 +54,22 @@ func (s *AggregateSuite) TestFullData() {
 	req.Equalf(s.T(), 0, result, "Failed check correct method result")
 
 	s.CheckLogOutput("out", 5)
+	req.Equal(s.T(), 5, s.CountInputFiles("out"), "Input files were not left as requested")
+}
+
+func (s *AggregateSuite) TestDeleteAfterMergeData() {
+	s.GenerateLog("out", 10)
+
+	result := MainRoutine(&Options{
+		Input:     "tempTest",
+		MaxChunks: 5,
+		Delete:    true,
+	})
+	req.Equalf(s.T(), 0, result, "Failed check correct method result")
+
+	s.CheckChunkedLogOutput("out", LinesPerChunk*2, 5)
+
+	req.Equal(s.T(), 0, s.CountInputFiles("out"), "Input files were not deleted as requested")
 }
 
 func (s *AggregateSuite) TestChunkData() {
@@ -64,6 +82,8 @@ func (s *AggregateSuite) TestChunkData() {
 	req.Equalf(s.T(), 0, result, "Failed check correct method result")
 
 	s.CheckChunkedLogOutput("out", LinesPerChunk*2, 5)
+
+	req.Equal(s.T(), 10, s.CountInputFiles("out"), "Input files were not left as requested")
 }
 
 func (s *AggregateSuite) TestNoData() {
@@ -88,6 +108,7 @@ func (b *BaseSuite) GenerateLog(basename string, maxChunks int) {
 		maxChunks = 1
 	}
 	_ = os.Mkdir("tempTest", 0777)
+	_ = os.Mkdir("tempTest/emptyDir", 0777)
 
 	var index = 0
 	var lines = LinesPerChunk
@@ -148,4 +169,22 @@ func (b *BaseSuite) CheckChunkedLogOutput(basename string, linesPerChunk, fullCh
 		req.Equalf(b.T(), index, linesPerChunk*fileIdx, "Failed output log length check")
 	}
 	req.Equalf(b.T(), index, linesPerChunk*fullChunks, "Failed output log length check")
+}
+
+func (b *BaseSuite) CountInputFiles(basename string) int {
+	countedChunks := 0
+	_ = filepath.Walk("tempTest", func(currPath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		hasBaseName := strings.Contains(info.Name(), basename)
+		hasFullTag := strings.Contains(info.Name(), "full")
+		hasLogExt := strings.HasSuffix(info.Name(), "log")
+
+		if !hasFullTag && hasBaseName && hasLogExt {
+			countedChunks++
+		}
+		return nil
+	})
+	return countedChunks
 }
