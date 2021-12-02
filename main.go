@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -20,9 +23,12 @@ import (
 
 type Options struct {
 	Input     flags.Filename `short:"i" long:"input" description:"Input file" default:"."`
-	Reverse   bool           `short:"n" long:"Reverse" description:"Reverse numerical order of found files"`
-	Delete    bool           `short:"d" long:"delete" description:"Delete original files'"`
-	MaxChunks int            `short:"c" long:"max-chunks" description:"Max chunks to merge, default 0 means merge all'" default:"0"`
+	Reverse   bool           `short:"r" long:"reverse" description:"Reverse numerical order of found files"`
+	Delete    bool           `short:"d" long:"delete" description:"Delete original files"`
+	MaxChunks int            `short:"c" long:"max-chunks" description:"Max chunks to merge, default 0 means merge all" default:"0"`
+
+	Filters         []string         `short:"f" long:"filter" description:"List of regex filters for fields" default:""`
+	compiledFilters []*regexp.Regexp // compiled regex filters to be applied, if empty all data is accepted as-is
 }
 
 const (
@@ -44,7 +50,7 @@ type FilesList map[string][]*logFile
 func main() {
 	var options Options
 	var parser = flags.NewParser(&options, flags.Default)
-	
+
 	defer func() {
 		if err := recover(); err != nil {
 			log.Errorf("[ERROR]: %v\n", err)
@@ -71,6 +77,11 @@ func MainRoutine(options *Options) int {
 		log.Errorf("Launch options not passed correctly\n")
 		return 1
 	}
+
+	// precompile all filters specified to avoid overhead during execution
+	for _, f := range options.Filters {
+		options.compiledFilters = append(options.compiledFilters, regexp.MustCompile(f))
+	}
 	log.Println(options)
 
 	log.Println("[Begin scan of path]")
@@ -83,7 +94,7 @@ func MainRoutine(options *Options) int {
 	}
 
 	for fBase, list := range allFiles {
-		MergeLogList(string(options.Input), fBase, list, options)
+		MergeLogList(options, string(options.Input), fBase, list)
 
 		if options.Delete {
 			DeleteLogList(string(options.Input), list)
@@ -141,7 +152,7 @@ func ScanFolderForFiles(logsPath flags.Filename) (FilesList, error) {
 	return filesMap, err
 }
 
-func MergeLogList(basepath, basename string, list []*logFile, config *Options) {
+func MergeLogList(config *Options, basepath, basename string, list []*logFile) {
 	log.Println("[Start output of log: ", basepath, "]")
 	// alphabetical order is not good here, actual numeric order is required
 	sort.Slice(list, func(i, j int) bool {
@@ -187,11 +198,11 @@ func MergeLogList(basepath, basename string, list []*logFile, config *Options) {
 			nextPos = len(list)
 		}
 
-		MergeLogChunk(basepath, f, list[currPos:nextPos])
+		MergeLogChunk(config, basepath, f, list[currPos:nextPos])
 	}
 }
 
-func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
+func MergeLogChunk(config *Options, basepath string, f *os.File, list []*logFile) {
 	defer func() {
 		if err := recover(); err != nil {
 			log.Errorf("[ERROR]: %v\n", err)
@@ -209,6 +220,8 @@ func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
 
 	var currentWriteFileIndex = int32(0)
 
+	// Loads all file parts specified for chunk and writes it
+	// to the output file in parallel
 	wg := &sync.WaitGroup{}
 	wg.Add(len(list))
 	for idx, _ := range list {
@@ -221,23 +234,80 @@ func MergeLogChunk(basepath string, f *os.File, list []*logFile) {
 				wg.Done()
 			}()
 
-			data, err := ioutil.ReadFile(filepath.Join(basepath, list[listIndex].name))
+			fileFullpath := filepath.Join(basepath, list[listIndex].name)
+			data, err := LoadDataToWrite(config, fileFullpath)
 			if err != nil {
 				log.Errorf("[ERROR]: End output for %v\n", err)
 				return
 			}
 
+			// respect ordering of output even if loading in parallel
 			for atomic.LoadInt32(&currentWriteFileIndex) != listIndex {
 				time.Sleep(10 * time.Microsecond)
 			}
 
-			log.Printf("[%d / %d]: %s (Read %d bytes)\n", listIndex+1, len(list), list[listIndex].name, len(data))
-			_, _ = f.Write(data)
+			log.Printf("[%d / %d]: %s (Read %d bytes)\n", listIndex+1, len(list), list[listIndex].name, data.Len())
+			_, _ = f.Write(data.Bytes())
 
 			atomic.StoreInt32(&currentWriteFileIndex, listIndex+1)
 		}(int32(idx))
 	}
 	wg.Wait()
+}
+
+func LoadDataToWrite(config *Options, fileFullpath string) (*bytes.Buffer, error) {
+	if len(config.compiledFilters) < 1 {
+		// fast path load entire file without filter
+		data, err := ioutil.ReadFile(fileFullpath)
+		if err != nil {
+			return nil, err
+		}
+
+		buf := bytes.NewBuffer(data)
+		return buf, nil
+	}
+
+	// filtering is requested so load file line by line with scanner and filter
+	// it to a buffer
+	f, err := os.OpenFile(fileFullpath, os.O_RDONLY, 0777)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	buf := bytes.NewBuffer(make([]byte, 4096))
+	scanner := bufio.NewScanner(f)
+	scanner.Split(bufio.ScanLines)
+
+	for scanner.Scan() {
+		data := scanner.Bytes()
+
+		// lines can match multiple filters, if they contain captures
+		// only those are written, else the entire line
+		for _, filter := range config.compiledFilters {
+			matches := filter.FindAllSubmatch(data, -1)
+			if len(matches) < 1 {
+				continue
+			}
+
+			for _, match := range matches {
+				if len(match) == 1 {
+					// no captures in filter
+					buf.Write(match[0])
+					continue
+				}
+
+				for k := 1; k < len(match)-1; k++ {
+					buf.Write(match[k])
+					buf.WriteByte(' ')
+				}
+				buf.Write(match[len(match)-1])
+			}
+		}
+		buf.WriteByte('\n')
+	}
+
+	return buf, nil
 }
 
 func DeleteLogList(basepath string, list []*logFile) {
