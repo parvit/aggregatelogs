@@ -2,7 +2,7 @@ name: Build-Branch
 
 on:
   push:
-    branches: [ testing-results ]
+    branches: [ addfilters ]
 
 jobs:
 
